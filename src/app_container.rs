@@ -12,10 +12,20 @@ use wasm_bindgen::prelude::*;
 use winit::platform::web::EventLoopExtWebSys;
 
 pub trait WgpuApplication: Sized {
-    fn window_attributes() -> anyhow::Result<Option<winit::window::WindowAttributes>>;
+    type InitData;
+
+    /// Returns the window attributes and init data for the application.
+    /// If the application doesn't need a window, it can return Ok(None),
+    /// and the application will exit. If something went wrong, it can return an error.
+    fn init_data() -> anyhow::Result<Option<(winit::window::WindowAttributes, Self::InitData)>>;
+
+    /// Creates a new application, after window initialization.
     fn new(
         window: Arc<winit::window::Window>,
+        init_data: &Self::InitData,
     ) -> impl std::future::Future<Output = anyhow::Result<Self>> + Send;
+
+    /// Handles winit window events.
     fn window_event(&mut self, event_loop: &ActiveEventLoop, event: WindowEvent);
 }
 
@@ -27,12 +37,14 @@ struct WgpuAppContainer<AppType: WgpuApplication> {
     proxy: Option<winit::event_loop::EventLoopProxy<App>>,
     state: Option<AppType>,
     window_attributes: winit::window::WindowAttributes,
+    init_data: AppType::InitData,
 }
 
 impl<T: WgpuApplication> WgpuAppContainer<T> {
     pub fn new(
         window_attributes: winit::window::WindowAttributes,
         #[cfg(target_arch = "wasm32")] event_loop: &EventLoop<App>,
+        init_data: T::InitData,
     ) -> Self {
         #[cfg(target_arch = "wasm32")]
         let proxy = Some(event_loop.create_proxy());
@@ -41,6 +53,7 @@ impl<T: WgpuApplication> WgpuAppContainer<T> {
             proxy,
             state: None,
             window_attributes,
+            init_data,
         }
     }
 }
@@ -70,7 +83,7 @@ impl<AppType: WgpuApplication + 'static> ApplicationHandler<AppType> for WgpuApp
         {
             // If we are not on web we can use pollster to
             // await the
-            self.state = Some(pollster::block_on(AppType::new(window)).unwrap());
+            self.state = Some(pollster::block_on(AppType::new(window, &self.init_data)).unwrap());
         }
 
         #[cfg(target_arch = "wasm32")]
@@ -117,22 +130,20 @@ impl<AppType: WgpuApplication + 'static> ApplicationHandler<AppType> for WgpuApp
 }
 
 pub fn run<AppType: WgpuApplication + 'static>() -> anyhow::Result<()> {
-    // Get the window attributes from the app. It can return Ok(None) if the app doesn't need a window.
-    // Or it can return an error if something went wrong.
-    let window_attributes = match AppType::window_attributes()? {
-        Some(attributes) => attributes,
+    let (window_attributes, init_data) = match AppType::init_data()? {
+        Some((attributes, init_data)) => (attributes, init_data),
         None => return Ok(()),
     };
 
     let event_loop = EventLoop::with_user_event().build()?;
     #[cfg(not(target_arch = "wasm32"))]
     {
-        let mut app = WgpuAppContainer::<AppType>::new(window_attributes);
+        let mut app = WgpuAppContainer::<AppType>::new(window_attributes, init_data);
         event_loop.run_app(&mut app)?;
     }
     #[cfg(target_arch = "wasm32")]
     {
-        let app = WgpuAppContainer::new(window_attributes, &event_loop);
+        let app = WgpuAppContainer::new(window_attributes, &event_loop, init_data);
         event_loop.spawn_app(app);
     }
 
