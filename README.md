@@ -14,7 +14,17 @@ use winit::event_loop::ActiveEventLoop;
 use winit::window::Window;
 
 fn main() -> blwf::Result<()> {
-    run::<MinimalWgpuApp>()
+    let mut frames_processed: u32 = 0;
+    run::<MinimalWgpuApp>(
+        winit::window::WindowAttributes::default()
+            .with_title("Minimal WGPU App")
+            .with_inner_size(winit::dpi::LogicalSize::new(800, 600)),
+        &mut frames_processed,
+    )?;
+
+    println!("frames_processed: {frames_processed}");
+
+    Ok(())
 }
 
 struct MinimalWgpuApp {
@@ -22,24 +32,19 @@ struct MinimalWgpuApp {
 }
 
 impl WgpuApplication for MinimalWgpuApp {
-    type InitData = &'static str;
+    type Data = u32;
 
-    fn init_data() -> blwf::Result<Option<(winit::window::WindowAttributes, Self::InitData)>> {
-        Ok(Some((
-            winit::window::WindowAttributes::default()
-                .with_title("Minimal WGPU App")
-                .with_inner_size(winit::dpi::LogicalSize::new(800, 600)),
-            "Hello from init_data",
-        )))
-    }
-
-    async fn new(window: Arc<Window>, init_data: &Self::InitData) -> blwf::Result<Self> {
-        println!("{init_data}");
+    async fn new(window: Arc<Window>, data: &mut Self::Data) -> blwf::Result<Self> {
         let base = WgpuBase::new(window).await?;
         Ok(Self { base })
     }
 
-    fn window_event(&mut self, event_loop: &ActiveEventLoop, event: WindowEvent) {
+    fn window_event(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        event: WindowEvent,
+        data: &mut Self::Data,
+    ) {
         use winit::event::KeyEvent;
         use winit::keyboard::KeyCode;
         use winit::keyboard::PhysicalKey;
@@ -50,6 +55,7 @@ impl WgpuApplication for MinimalWgpuApp {
                 self.base.resize(size.width, size.height);
             }
             WindowEvent::RedrawRequested => {
+                *data += 1;
                 if let Err(e) = self.render() {
                     eprintln!("{e}");
                     event_loop.exit();
@@ -109,4 +115,5 @@ impl MinimalWgpuApp {
         Ok(())
     }
 }
+
 ```

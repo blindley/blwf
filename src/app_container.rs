@@ -12,39 +12,39 @@ use wasm_bindgen::prelude::*;
 use winit::platform::web::EventLoopExtWebSys;
 
 pub trait WgpuApplication: Sized {
-    type InitData;
-
-    /// Returns the window attributes and init data for the application.
-    /// If the application doesn't need a window, it can return Ok(None),
-    /// and the application will exit. If something went wrong, it can return an error.
-    fn init_data() -> anyhow::Result<Option<(winit::window::WindowAttributes, Self::InitData)>>;
+    type Data;
 
     /// Creates a new application, after window initialization.
     fn new(
         window: Arc<winit::window::Window>,
-        init_data: &Self::InitData,
+        data: &mut Self::Data,
     ) -> impl std::future::Future<Output = anyhow::Result<Self>> + Send;
 
     /// Handles winit window events.
-    fn window_event(&mut self, event_loop: &ActiveEventLoop, event: WindowEvent);
+    fn window_event(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        event: WindowEvent,
+        data: &mut Self::Data,
+    );
 }
 
 /// WgpuAppContainer is a container that handles the abstraction over standard window based applications,
 /// and wasm32 applications. It also handles the resume cycle for platforms (mobile) where that is relevant.
 /// Window events are forwarded to the App struct.
-struct WgpuAppContainer<AppType: WgpuApplication> {
+struct WgpuAppContainer<'a, AppType: WgpuApplication> {
     #[cfg(target_arch = "wasm32")]
     proxy: Option<winit::event_loop::EventLoopProxy<App>>,
     state: Option<AppType>,
     window_attributes: winit::window::WindowAttributes,
-    init_data: AppType::InitData,
+    data: &'a mut AppType::Data,
 }
 
-impl<T: WgpuApplication> WgpuAppContainer<T> {
+impl<'a, T: WgpuApplication> WgpuAppContainer<'a, T> {
     pub fn new(
         window_attributes: winit::window::WindowAttributes,
         #[cfg(target_arch = "wasm32")] event_loop: &EventLoop<App>,
-        init_data: T::InitData,
+        data: &'a mut T::Data,
     ) -> Self {
         #[cfg(target_arch = "wasm32")]
         let proxy = Some(event_loop.create_proxy());
@@ -53,12 +53,14 @@ impl<T: WgpuApplication> WgpuAppContainer<T> {
             proxy,
             state: None,
             window_attributes,
-            init_data,
+            data,
         }
     }
 }
 
-impl<AppType: WgpuApplication + 'static> ApplicationHandler<AppType> for WgpuAppContainer<AppType> {
+impl<'a, AppType: WgpuApplication + 'static> ApplicationHandler<AppType>
+    for WgpuAppContainer<'a, AppType>
+{
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         #[allow(unused_mut)]
         let mut window_attributes = self.window_attributes.clone();
@@ -83,7 +85,7 @@ impl<AppType: WgpuApplication + 'static> ApplicationHandler<AppType> for WgpuApp
         {
             // If we are not on web we can use pollster to
             // await the
-            self.state = Some(pollster::block_on(AppType::new(window, &self.init_data)).unwrap());
+            self.state = Some(pollster::block_on(AppType::new(window, self.data)).unwrap());
         }
 
         #[cfg(target_arch = "wasm32")]
@@ -124,21 +126,19 @@ impl<AppType: WgpuApplication + 'static> ApplicationHandler<AppType> for WgpuApp
         event: WindowEvent,
     ) {
         if let Some(state) = self.state.as_mut() {
-            state.window_event(event_loop, event);
+            state.window_event(event_loop, event, self.data);
         }
     }
 }
 
-pub fn run<AppType: WgpuApplication + 'static>() -> anyhow::Result<()> {
-    let (window_attributes, init_data) = match AppType::init_data()? {
-        Some((attributes, init_data)) => (attributes, init_data),
-        None => return Ok(()),
-    };
-
+pub fn run<AppType: WgpuApplication + 'static>(
+    window_attributes: winit::window::WindowAttributes,
+    data: &mut AppType::Data,
+) -> anyhow::Result<()> {
     let event_loop = EventLoop::with_user_event().build()?;
     #[cfg(not(target_arch = "wasm32"))]
     {
-        let mut app = WgpuAppContainer::<AppType>::new(window_attributes, init_data);
+        let mut app = WgpuAppContainer::<AppType>::new(window_attributes, data);
         event_loop.run_app(&mut app)?;
     }
     #[cfg(target_arch = "wasm32")]
