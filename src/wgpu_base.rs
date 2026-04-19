@@ -102,11 +102,9 @@ impl WgpuBase {
         }
     }
 
-    /// Call this from your app's render function. It will request a redraw, and return the window surface
+    /// Call this from your app's render function. It returns the window surface
     /// texture if the surface is configured.
     pub fn begin_render(&self) -> anyhow::Result<Option<wgpu::SurfaceTexture>> {
-        self.window.request_redraw();
-
         // We can't render unless the surface is configured
         if !self.is_surface_configured {
             return Ok(None);
